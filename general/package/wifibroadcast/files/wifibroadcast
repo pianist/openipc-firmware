@@ -35,18 +35,23 @@ detect_wifi_card() {
 	for card in $devices; do
 		case "$card" in
 			"0bda:8812" | "0bda:881a" | "0b05:17d2" | "2357:0101" | "2604:0012")
-				driver="realtek"
+				driver="88XXau"
 				modprobe 88XXau rtw_tx_pwr_idx_override="$driver_txpower_override"
 				;;
 
 			"0bda:a81a")
-				driver="realtek_8812eu"
+				driver="8812eu"
 				modprobe 8812eu rtw_regd_src=1 rtw_tx_pwr_by_rate=0 rtw_tx_pwr_lmt_enable=0
 				;;
 
+			"0bda:f72b")
+				driver="8733bu"
+				modprobe 8733bu rtw_regd_src=1 rtw_tx_pwr_by_rate=0 rtw_tx_pwr_lmt_enable=0
+				;;
+
 			"0cf3:9271" | "040d:3801")
-				driver="atheros"
-				if ! [ "$unit" = "gs" ]; then
+				driver="ar9271"
+				if [ "$unit" != "gs" ]; then
 					set_mcs
 				fi
 				modprobe mac80211
@@ -80,16 +85,16 @@ load_modules() {
 }
 
 load_interface() {
-	if [ "$driver" = "realtek" ]; then
+	if [ "$driver" = "ar9271" ]; then
+		iwconfig "$wlan" mode monitor
+		ifconfig "$wlan" up
+	else
 		ifconfig "$wlan" up
 		iwconfig "$wlan" mode monitor
-	elif [ "$driver" = "realtek_8812eu" ]; then
-		ifconfig "$wlan" up
-		iwconfig "$wlan" mode monitor
+	fi
+
+	if [ "$driver" = "8812eu" ] || [ "$driver" = "8733bu" ]; then
 		iw dev "$wlan" set txpower fixed $((driver_txpower_override * 50))
-	elif [ "$driver" = "atheros" ]; then
-		iwconfig "$wlan" mode monitor
-		ifconfig "$wlan" up
 	fi
 
 	iw reg set "$region"
@@ -99,25 +104,34 @@ load_interface() {
 	else
 		iwconfig "$wlan" channel "$channel"
 	fi
-
-	# Set txpower
-	#iw dev $wlan set txpower fixed $(($txpower * 100))
 }
 
 start_drone_wfb() {
 	wfb_tx -p "$stream" -u "$udp_port" -R "$rcv_buf" -K "$keydir/$unit.key" -B "$bandwidth" \
 		-M "$mcs_index" -S "$stbc" -L "$ldpc" -G "$guard_interval" -k "$fec_k" -n "$fec_n" \
-		-T "$pool_timeout" -i "$link_id" -f "$frame_type" "$wlan" > /dev/null &
+		-T "$pool_timeout" -i "$link_id" -f "$frame_type" -C 8000 "$wlan" > /dev/null &
 }
 
 start_gs_wfb() {
 	wfb_rx -c "$udp_addr" -u "$udp_port" -p "$stream" -K "$keydir/$unit.key" -i "$link_id" "$wlan" > /dev/null &
 }
 
+start_tunnel_wfb() {
+	if [ ! -e /usr/bin/tunnel_rx ] || [ ! -e /usr/bin/tunnel_tx ]; then
+		ln -fs /usr/bin/wfb_rx /usr/bin/tunnel_rx
+		ln -fs /usr/bin/wfb_tx /usr/bin/tunnel_tx
+	fi
+
+	tunnel_rx -p 160 -u 5800 -K "$keydir/$unit.key" -i "$link_id" "$wlan" > /dev/null &
+	tunnel_tx -p 32 -u 5801 -K "$keydir/$unit.key" -M "$mcs_index" -S "$stbc" -L "$ldpc" \
+		-k "$fec_k" -n "$fec_n" -i "$link_id" "$wlan" > /dev/null &
+	wfb_tun -a 10.5.0.10/24 > /dev/null &
+}
+
 case "$1" in
 	start)
 		if [ "$daemon" -eq 1 ]; then
-			echo "Loading modules and wifi card driver..."
+			echo "Loading modules and wireless driver..."
 			load_modules
 			load_interface
 
@@ -126,32 +140,39 @@ case "$1" in
 				cd $keydir && wfb_keygen
 			fi
 
-			echo "Starting Wifibroadcast service..."
 			start_${unit}_wfb
 
 			if [ "$telemetry" = "true" ]; then
 				if [ "$chip" = "gk7205v200" ]; then
-					# UART2_RX mux
-					devmem 0x120c0010 32 0x1e04
+					devmem 0x120C0010 32 0x1E04
 				elif [ "$chip" = "ssc33x" ]; then
-					# UART2
 					devmem 0x1F207890 16 0x8
 				fi
 				telemetry start
 			fi
+
+			if [ "$tunnel" = "true" ]; then
+				start_tunnel_wfb
+			fi
 		else
-			echo "Wifibroadcast service disabled in wfb.conf."
+			echo "Wifibroadcast service disabled in wfb.conf"
 		fi
 		;;
 
 	stop)
-		echo "Stopping Wifibroadcast services..."
+		echo "Stopping wifibroadcast service..."
 		killall -q wfb_tx
 		killall -q wfb_rx
-		killall -q telemetry_rx
-		killall -q telemetry_tx
-		killall -q mavlink-routerd
-		killall -q mavfwd
+
+		if [ "$telemetry" = "true" ]; then
+			telemetry stop
+		fi
+
+		if [ "$tunnel" = "true" ]; then
+			killall -q tunnel_rx
+			killall -q tunnel_tx
+			killall -q wfb_tun
+		fi
 		;;
 
 	*)

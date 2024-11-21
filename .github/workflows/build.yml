@@ -3,11 +3,8 @@ on:
   pull_request:
     branches:
       - master
-  push:
-    branches:
-      - master
   schedule:
-    - cron: '0 1 * * *'
+    - cron: '30 22 * * *'
   workflow_dispatch:
 
 env:
@@ -40,6 +37,9 @@ jobs:
 
           # Sigmastar [I6C]
           - {"platform": "ssc377", "release": "lite"}
+          - {"platform": "ssc377d", "release": "lite"}
+          - {"platform": "ssc377de", "release": "lite"}
+          - {"platform": "ssc378de", "release": "lite"}
 
           # Sigmastar [I6E]
           - {"platform": "ssc30kd", "release": "lite"}
@@ -146,11 +146,15 @@ jobs:
           - {"platform": "gk7205v300", "release": "ultimate"}
           - {"platform": "gk7605v100", "release": "lite"}
 
+          # Allwinner
+          - {"platform": "v851s", "release": "lite"}
+
           # Fullhan
           - {"platform": "fh8852v100", "release": "lite"}
           - {"platform": "fh8852v200", "release": "lite"}
 
           # Grainmedia
+          - {"platform": "gm8135", "release": "lite"}
           - {"platform": "gm8136", "release": "lite"}
 
           # Novatek
